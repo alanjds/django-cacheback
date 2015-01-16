@@ -1,14 +1,30 @@
 import time
 import logging
+import hashlib
 
 from django.core.cache import get_cache, DEFAULT_CACHE_ALIAS
 from django.conf import settings
+import six
 
 from cacheback import tasks
 
 logger = logging.getLogger('cacheback')
 
 MEMCACHE_MAX_EXPIRATION = 2592000
+
+
+def to_bytestring(value):
+    """
+    Encode a string as a UTF8 bytestring.  This function could be passed a
+    bytestring or unicode string so must distinguish between the two.
+    """
+    if isinstance(value, six.text_type):
+        return string.encode('utf8')
+    if isinstance(value, six.binary_type):
+        return value
+    if six.PY2:
+        return str(value)
+    return bytes(str(value), 'utf8')
 
 
 class Job(object):
@@ -296,19 +312,27 @@ class Job(object):
             return self.class_path
         try:
             if args and not kwargs:
-                return "%s:%s" % (self.class_path, hash(args))
+                return "%s:%s" % (self.class_path, self.hash(args))
             # The line might break if your passed values are un-hashable.  If
             # it does, you need to override this method and implement your own
             # key algorithm.
             return "%s:%s:%s:%s" % (self.class_path,
-                                    hash(args),
-                                    hash(tuple(kwargs.keys())),
-                                    hash(tuple(kwargs.values())))
+                                    self.hash(args),
+                                    self.hash(tuple(kwargs.keys())),
+                                    self.hash(tuple(kwargs.values())))
         except TypeError:
             raise RuntimeError(
                 "Unable to generate cache key due to unhashable"
                 "args or kwargs - you need to implement your own"
                 "key generation method to avoid this problem")
+
+    def hash(self, value):
+        """
+        Generate a hash of the given tuple.
+
+        This is for use in a cache key.
+        """
+        return hashlib.md5(to_bytestring(value)).hexdigest()
 
     def fetch(self, *args, **kwargs):
         """
