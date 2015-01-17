@@ -110,12 +110,12 @@ class Job(object):
                 # empty result which will be returned until the cache is
                 # refreshed.
                 empty = self.empty()
-                self.cache_set(key, self.timeout(*args, **kwargs), empty)
+                self.cache_set(key, self.timeout(*args, **kwargs), 'QUEUED', empty)
                 self.async_refresh(*args, **kwargs)
                 fetched = empty
                 return self.got_miss(fetched, True, *raw_args, **raw_kwargs)
 
-        expiry, data = item
+        expiry, status, data = item
         delta = time.time() - expiry
         if delta > 0:
             # Cache HIT but STALE expiry - we can either:
@@ -141,14 +141,14 @@ class Job(object):
                 # prevents cache hammering but guards against a 'limbo' situation
                 # where the refresh task fails for some reason.
                 timeout = self.timeout(*args, **kwargs)
-                self.cache_set(key, timeout, data)
+                self.cache_set(key, timeout, 'QUEUED', data)
                 self.async_refresh(*args, **kwargs)
                 fetched = data
                 return self.got_stale(fetched, True, *raw_args, **raw_kwargs)
         else:
-            logger.debug("Job %s with key '%s' - cache HIT", self.class_path, key)
+            logger.debug("Job %s with key '%s' - cache HIT (%s)", self.class_path, key, status)
             fetched = data
-            return self.got_hit(fetched, *raw_args, **raw_kwargs)
+            return self.got_hit(fetched, status, *raw_args, **raw_kwargs)
 
     def invalidate(self, *raw_args, **raw_kwargs):
         """
@@ -161,7 +161,7 @@ class Job(object):
         item = self.cache.get(key)
         if item is not None:
             expiry, data = item
-            self.cache_set(key, self.timeout(*args, **kwargs), data)
+            self.cache_set(key, self.timeout(*args, **kwargs), 'QUEUED', data)
             self.async_refresh(*args, **kwargs)
 
     def delete(self, *raw_args, **raw_kwargs):
@@ -185,7 +185,7 @@ class Job(object):
     def prepare_kwargs(self, **kwargs):
         return kwargs
 
-    def cache_set(self, key, expiry, data):
+    def cache_set(self, key, expiry, status, data):
         """
         Add a result to the cache
 
@@ -193,13 +193,13 @@ class Job(object):
         :expiry: The expiry timestamp after which the result is stale
         :data: The data to cache
         """
-        self.cache.set(key, (expiry, data), self.cache_ttl)
+        self.cache.set(key, (expiry, status, data), self.cache_ttl)
 
         if getattr(settings, 'CACHEBACK_VERIFY_CACHE_WRITE', True):
             # We verify that the item was cached correctly.  This is to avoid a
             # Memcache problem where some values aren't cached correctly
             # without warning.
-            __, cached_data = self.cache.get(key, (None, None))
+            __, __, cached_data, = self.cache.get(key, (None, None, None))
             if data is not None and cached_data is None:
                 raise RuntimeError(
                     "Unable to save data of type %s to cache" % (
@@ -212,6 +212,7 @@ class Job(object):
         result = self.fetch(*args, **kwargs)
         self.cache_set(self.key(*args, **kwargs),
                        self.expiry(*args, **kwargs),
+                       'FRESH',
                        result)
         return result
 
@@ -358,10 +359,12 @@ class Job(object):
         """
         return fetched
 
-    def got_hit(self, fetched, *raw_args, **raw_kwargs):
+    def got_hit(self, fetched, status, *raw_args, **raw_kwargs):
         """
         Transforms the fetched data right before returning from .get(...)
         Only runs if data is fresh HIT.
+
+        'status' can be 'FRESH'. Can be 'QUEUED' to refresh too.
         """
         return fetched
 
