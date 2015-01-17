@@ -110,12 +110,12 @@ class Job(object):
                 # empty result which will be returned until the cache is
                 # refreshed.
                 empty = self.empty()
-                self.cache_set(key, self.timeout(*args, **kwargs), empty, 'QUEUED')
+                self.cache_set(key, self.timeout(*args, **kwargs), 'QUEUED', empty)
                 self.async_refresh(*args, **kwargs)
                 fetched = empty
                 return self.got_miss(fetched, True, *raw_args, **raw_kwargs)
 
-        expiry, data, status = item
+        expiry, status, data = item
         delta = time.time() - expiry
         if delta > 0:
             # Cache HIT but STALE expiry - we can either:
@@ -141,7 +141,7 @@ class Job(object):
                 # prevents cache hammering but guards against a 'limbo' situation
                 # where the refresh task fails for some reason.
                 timeout = self.timeout(*args, **kwargs)
-                self.cache_set(key, timeout, data, 'QUEUED')
+                self.cache_set(key, timeout, 'QUEUED', data)
                 self.async_refresh(*args, **kwargs)
                 fetched = data
                 return self.got_stale(fetched, True, *raw_args, **raw_kwargs)
@@ -161,7 +161,7 @@ class Job(object):
         item = self.cache.get(key)
         if item is not None:
             expiry, data = item
-            self.cache_set(key, self.timeout(*args, **kwargs), data, 'QUEUED')
+            self.cache_set(key, self.timeout(*args, **kwargs), 'QUEUED', data)
             self.async_refresh(*args, **kwargs)
 
     def delete(self, *raw_args, **raw_kwargs):
